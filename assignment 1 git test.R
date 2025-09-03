@@ -8,3 +8,9 @@
 
 #ted adding this to see what 2/1 is
 2/1
+
+#dana pulling in a dataset
+library(MASS)
+data(Boston)
+summary(Boston)
+head(Boston)
