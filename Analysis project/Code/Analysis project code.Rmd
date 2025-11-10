@@ -1,0 +1,91 @@
+---
+title: "Analysis project code"
+author: "Dana Popky and Ted Van Green"
+date: "2025-11-10"
+output: html_document
+---
+
+```{r, warning = FALSE, message = FALSE}
+
+library(tidyverse)
+library(rvest)
+library(RSelenium)
+library(rvest)
+library(xml2)
+library(stringr)
+library(pageviews) 
+library(httr)
+library(jsonlite)
+
+```
+
+## Scraping the NYT
+
+```{r, eval = TRUE}
+
+#loading the api (scraping effort)
+nyt_key <- read_file('nyt-key.txt') 
+start_date <- as.Date("2024-10-07") #30 days before the election
+end_date   <- as.Date("2024-12-06") #30 days after the election
+months_to_get <- c(10, 11, 12) #Months of election: Oct, Nov, Dec
+year_to_get <- 2024 #Year of election
+
+all_articles <- list()
+
+for (m in months_to_get) {
+  base_url <- paste0("https://api.nytimes.com/svc/archive/v1/", year_to_get, "/", m, ".json")
+  message("Requesting: ", base_url)
+  request <- GET(base_url, query = list('api-key' = nyt_key))
+  message("Status: ", request$status_code)
+  if (request$status_code != 200) {
+    warning("NYT API request failed for ", year_to_get, "-", sprintf("%02d", m),
+            " (status ", request$status_code, "). Skipping this month.")
+    next
+  }
+}
+
+```
+
+## Data cleaning
+
+```{r, eval = TRUE}
+
+#getting the data and cleaning it
+response <- content(request, as = "text", encoding = "UTF-8")
+nytdata <- fromJSON(response, flatten = TRUE)
+nytdf <- nytdata$response$docs
+
+all_articles[[paste0(year_to_get, "_", m)]] <- nytdf
+all_articles_uncleaned <- bind_rows(all_articles)
+
+#filtering the data to the 30 days pre and post election
+all_articles_filtered <- all_articles_uncleaned %>%
+  mutate(pub_date_parsed = ymd_hms(pub_date, tz = "UTC"),
+         pub_date_date = as.Date(pub_date_parsed)) %>%
+  filter(pub_date_date >= start_date, pub_date_date <= end_date)
+
+message("Articles in window (", start_date, " to ", end_date, "): ",
+        nrow(all_articles_filtered))
+
+
+nytdf_CLEAN <- all_articles_filtered
+
+```
+
+
+## ANALYSIS [[OLD]]
+
+```{r, eval = TRUE}
+
+#Analysis
+
+#showing the number of articles written by different desks
+nytdf %>% group_by(news_desk) %>% summarize(count = n()) %>% arrange(desc(count)) %>% head()
+
+#showing whether the document type was article or multi-media
+nytdf %>% group_by(document_type) %>% summarize(count = n()) %>% arrange(desc(count)) %>% head()
+
+#showing which page it was printed on
+nytdf %>% group_by(print_page) %>% summarize(count = n()) %>% arrange(desc(count)) %>% head()
+
+```
