@@ -1,4 +1,3 @@
 # Popky_VanGreen
-Assignment 1 
-
-#tvg added some code 
+Repository for Assignment 1 and Analysis project
+# Dana Popky and Ted Van Green (DP added)
