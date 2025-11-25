@@ -114,10 +114,10 @@ keywords <- c("donald", "trump", "kamala", "harris", "jd","vance", "tim", "walz"
 pattern <- paste(keywords, collapse = "|")
 
 #this creates an index where every article has a TRUE or FALSE depending on if it contains key words. It ignores caps/case. 
-index <- grepl(pattern, nytdf$headline.main, ignore.case = TRUE)
+index <- grepl(pattern, nytdf_filtered$headline.main, ignore.case = TRUE)
 
 #this now only keeps articles that are true in our index
-nytdf_relevant_articles <- nytdf[index, , drop = FALSE]
+nytdf_relevant_articles <- nytdf_filtered[index, , drop = FALSE]
 
 #exporting the filtered data set
 write_csv(nytdf_relevant_articles, "nytdf_relevant_articles.csv")
