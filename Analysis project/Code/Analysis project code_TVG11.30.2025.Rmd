@@ -1,0 +1,382 @@
+---
+title: "Analysis project code"
+author: "Dana Popky and Ted Van Green"
+date: "2025-11-10"
+output: html_document
+---
+
+```{r, warning = FALSE, message = FALSE}
+
+
+#loading standard packages
+library(tidyverse)
+library(rvest)
+library(RSelenium)
+library(rvest)
+library(xml2)
+library(stringr)
+library(pageviews) 
+library(httr)
+library(jsonlite)
+library(readr)
+library(purrr)
+
+#loading hugging face packages
+library(reticulate) #NOTE see huggingface qmd file from class 7 for download instructions. Note I have already installed miniconda
+library(devtools) #NOTE I have already installed devtools 
+
+## I could not download the hugging face package without accepting terms and conditions with miniconda. The below code is a work around to do that. I am blanking it out now, since I won't need to re-run it, but keeping it here for posterity. 
+
+#conda <- reticulate::conda_binary()
+#conda
+
+#channels <- c(
+  #"https://repo.anaconda.com/pkgs/main",
+  #"https://repo.anaconda.com/pkgs/r",
+  #"https://repo.anaconda.com/pkgs/msys2"
+#)
+
+#for (ch in channels) {
+  #cmd <- paste(shQuote(conda),
+              # "tos accept --override-channels --channel", shQuote(ch))
+  #cat("Running:", cmd, "\n")
+  #system(cmd)
+#}
+
+#devtools::install_github("farach/huggingfaceR")
+library(huggingfaceR)
+
+#The below two lines are added for de-bugging to get the distilbert model to load correctly.NOTE that the dependencies line of code may take up to 10 minutes to run. 
+reticulate::use_condaenv("huggingfaceR", required = TRUE)
+hf_python_depends()
+
+
+```
+
+## Scraping the NYT
+
+```{r, eval = TRUE}
+
+#loading the api (scraping effort)
+nyt_key <- read_file('nyt-key.txt') 
+start_date <- as.Date("2024-10-07") #30 days before the election
+end_date   <- as.Date("2024-12-06") #30 days after the election
+months_to_get <- c(10, 11, 12) #Months of election: Oct, Nov, Dec
+year_to_get <- 2024 #Year of election
+
+request <- vector(mode = "list", length = length(months_to_get))
+names(request) <- months_to_get
+
+for (m in months_to_get) {
+  base_url <- paste0("https://api.nytimes.com/svc/archive/v1/", year_to_get, "/", m, ".json")
+  message("Requesting: ", base_url)
+  out <- GET(base_url, query = list('api-key' = nyt_key))
+  message("Status: ", out$status_code)
+  if (out$status_code != 200) {
+    warning("NYT API request failed for ", year_to_get, "-", sprintf("%02d", m),
+            " (status ", out$status_code, "). Skipping this month.")
+    next
+  }
+  
+  request[[as.character(m)]] <- out
+}
+
+#Cleaning the data and combining all three months
+nytdf <- map(request, function(x) {
+  
+  response <- content(x, as = "text", encoding = "UTF-8")
+  nytdata <- fromJSON(response, flatten = TRUE)
+  return(nytdata$response$docs)
+  
+}) %>%
+  bind_rows()
+
+#exporting the scraped data
+write_csv(nytdf, "nyt_scraped_articles.csv")
+
+```
+
+
+## Cleaning the data
+
+```{r, eval = TRUE}
+
+#filtering the data to the 30 days pre and post election
+nytdf_filtered <- nytdf %>%
+  mutate(pub_date_parsed = ymd_hms(pub_date, tz = "UTC"),
+         pub_date_date = as.Date(pub_date_parsed)) %>%
+  filter(pub_date_date >= start_date, pub_date_date <= end_date)
+
+#Only keeping articles that are about the election. 
+
+#This list is very general / comprehensive. We may want to experiment with removing the battleground states for instance to see how that impacts results
+keywords <- c("donald", "trump", "kamala", "harris", "jd","vance", "tim", "walz", "elect", "election", "race", "horserace", "polls", "polling", "vote", "voting", "ballot", "turnout", "results", "campaign", "campaigning", "primary", "caucus", "republican", "republicans", "gop", "democrat", "democratic", "democrats", "dems", "reps", "battleground", "pennsylvania", "georgia", "wisconsin", "michigan", "arizona", "nevada")
+pattern <- paste(keywords, collapse = "|")
+
+#this creates an index where every article has a TRUE or FALSE depending on if it contains key words. It ignores caps/case. 
+index <- grepl(pattern, nytdf_filtered$headline.main, ignore.case = TRUE)
+
+#this now only keeps articles that are true in our index
+nytdf_relevant_articles <- nytdf_filtered[index, , drop = FALSE]
+
+#exporting the filtered data set
+write_csv(nytdf_relevant_articles, "nytdf_relevant_articles.csv")
+
+```
+
+
+## Loading The diistilBERT model
+
+
+```{python}
+import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+```
+
+```{r}
+
+## this installs dependencies into the library (without this, you will get an error message when you try to obtain distilBERT for the first time). You only need to run this once, so blanking it out nere (note it may take like 10 minutes to run)
+#hf_python_depends("transformers")
+
+distilBERT <- hf_load_pipeline(
+  model_id = "distilbert-base-uncased-finetuned-sst-2-english", 
+  task = "text-classification"
+  )
+
+emotion_distilroBERTa <- hf_load_pipeline(
+  model_id = "j-hartmann/emotion-english-distilroberta-base", 
+  task = "text-classification"
+  )
+
+
+```
+
+
+## Finding the sentiment and emotion of each NYT headline
+
+```{r}
+
+#Finding the sentiment of each NYT article (note will take a long time to run)
+nyt_sentiment <- nytdf_relevant_articles %>%
+  mutate(sentiment = distilBERT(headline.main))
+
+#This code takes the column and breaks up the score and label so that we have separate columns for each
+nyt_sentiment <- nyt_sentiment %>%
+  mutate(
+    sentiment_label = map_chr(sentiment, ~ .x$label),
+    sentiment_score = map_dbl(sentiment, ~ .x$score)
+  )
+
+#Finding the emotion of each NYT article (note this will take a long time to run)
+nyt_sentiment <- nyt_sentiment %>%
+  mutate(emotion = emotion_distilroBERTa(headline.main))
+
+nyt_sentiment <- nyt_sentiment %>%
+  mutate(
+    emotion_label = map_chr(emotion, ~ .x$label),
+    emotion_score = map_dbl(emotion, ~ .x$score)
+  )
+
+#exporting the final dataset
+write_csv(nyt_sentiment, "NYT articles with sentiment and emotion.csv")
+
+```
+
+
+```{r}
+
+#Examining the sentiment
+
+nyt_scraped_articles <- read.csv("~/Popky_VanGreen/Analysis project/Code/nyt_scraped_articles.csv")
+nytdf_relevant_articles <- read.csv("~/Popky_VanGreen/Analysis project/Code/nytdf_relevant_articles.csv")
+nyt_sentiment <- read.csv("~/Popky_VanGreen/Analysis project/Code/NYT articles with sentiment and emotion.csv")
+
+nyt_sentiment <- nyt_sentiment %>% 
+  mutate(elecday_binary = ifelse(as.Date(pub_date_date) < as.Date("2024-11-06"),
+                                 "pre", "post"))
+
+#overall bar chart just to show much neutral dominates 
+table(nyt_sentiment$sentiment_label, nyt_sentiment$elecday_binary)
+table(nyt_sentiment$emotion_label, nyt_sentiment$elecday_binary)
+
+nyt_sentiment %>% count(elecday_binary, emotion_label) %>% 
+  group_by(elecday_binary) %>% mutate(pct = n/sum(n)*100) %>% 
+  ungroup() %>% 
+  select(emotion_label, elecday_binary, pct) %>% 
+  pivot_wider(names_from = elecday_binary,
+              values_from = pct,
+              names_prefix = "pct_")
+
+```
+
+
+```{r}
+library(tidytext)
+text_forclean <- nyt_sentiment %>% 
+  select(headline.main, elecday_binary, sentiment_label, sentiment_score,
+         emotion_label, emotion_score, news_desk)
+
+headlines_slim <- nyt_sentiment %>% 
+  select(headline.main, elecday_binary, sentiment_label, sentiment_score,
+         emotion_label, emotion_score, news_desk)
+
+tidy_textpre <- text_forclean %>% 
+  unnest_tokens(word, headline.main, token = "words")
+
+data("stop_words")
+
+tidy_textpre <- tidy_textpre %>% anti_join(stop_words)
+
+tidy_textpre %>% count(word, sort = T) %>% slice_max(n, n=10)
+
+tidy_textpre %>% group_by(elecday_binary) %>% 
+  count(word, sort = T) %>% slice_max(n, n=10)
+
+#bar chart for 10 most common words pre/post
+tidy_textpre %>%
+  count(elecday_binary, word, sort = TRUE) %>%  
+  group_by(elecday_binary) %>%
+  slice_max(n, n = 10) %>%                      
+  ungroup() %>%
+  mutate(word = reorder_within(word, n, elecday_binary)) %>%  
+  ggplot(aes(n, word)) +
+  geom_col(fill = "navy") +
+  facet_wrap(~ elecday_binary, scales = "free_y") + 
+  scale_y_reordered() +
+  labs(
+    x = "Word Count",
+    y = NULL,
+    title = "Top 10 Words pre/post election"
+  ) +
+  theme_bw() +
+  theme(strip.text = element_text(face = "bold"))
+
+#bar chart for sentiment_label pre/post
+headlines_slim %>% 
+  count(elecday_binary, sentiment_label) %>%
+  group_by(elecday_binary) %>%
+  mutate(pct = n / sum(n)) %>%
+  ggplot(aes(x = elecday_binary, y = pct, fill = sentiment_label)) +
+  geom_col(position = "fill") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    x = "Period",
+    y = "Percent",
+    fill = "Sentiment",
+    title = "Sentiment Label Distribution: Pre vs Post"
+  )
+
+#boxplot for sentiment score pre vs. post
+ggplot(headlines_slim, aes(x = elecday_binary, y = sentiment_score, fill = elecday_binary)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(
+    x = "Period",
+    y = "Sentiment Score",
+    title = "Sentiment Scores Pre vs Post"
+  ) +
+  theme(legend.position = "none")
+
+ggplot(headlines_slim, aes(x = elecday_binary, y = sentiment_score, fill = elecday_binary)) +
+  geom_violin(alpha = 0.7, trim = FALSE) +
+  geom_boxplot(width = 0.15, alpha = 0.6) +
+  labs(title = "Sentiment Score Distribution: Pre vs Post")
+
+
+#emotion label pre vs. post 
+headlines_slim %>%
+  count(elecday_binary, emotion_label) %>%
+  group_by(elecday_binary) %>%
+  mutate(pct = n / sum(n)) %>%
+  ggplot(aes(x = elecday_binary, y = pct, fill = elecday_binary)) +
+  geom_col() +
+  scale_y_continuous(labels = scales::percent_format()) +
+  facet_wrap(~ emotion_label) +
+  labs(
+    x = "Period",
+    y = "Percent",
+    title = "Emotion Category Distribution: Pre vs Post"
+  ) +
+  theme(legend.position = "none")
+
+
+#emotion score boxplot
+ggplot(headlines_slim, aes(x = elecday_binary, y = emotion_score, fill = elecday_binary)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(
+    x = "Period",
+    y = "Emotion Score",
+    title = "Emotion Scores Pre vs Post"
+  ) +
+  theme(legend.position = "none")
+
+
+#combined
+headlines_long <- headlines_slim %>%
+  select(elecday_binary, sentiment_score, emotion_score) %>%
+  pivot_longer(cols = -elecday_binary, names_to = "variable", values_to = "score")
+
+ggplot(headlines_long, aes(x = elecday_binary, y = score, fill = elecday_binary)) +
+  geom_boxplot() +
+  facet_wrap(~ variable, scales = "free_y") +
+  theme(legend.position = "none") +
+  labs(
+    x = "Period",
+    y = "Score",
+    title = "Score Distributions Pre vs Post (Sentiment & Emotion)"
+  )
+
+
+
+#newsdesk
+
+headlines_desk <- headlines_slim %>% 
+  filter(news_desk != "", news_desk != "Graphics") %>%  count(news_desk) %>% 
+  filter(n>=50) %>% pull(news_desk)
+
+headlines_slim %>%
+  filter(news_desk %in% headlines_desk) %>% 
+  count(elecday_binary, news_desk, sentiment_label) %>%
+  ggplot(aes(x = news_desk, y = n, fill = sentiment_label)) +
+  geom_col(position = "dodge") +
+  coord_flip() +
+  facet_wrap(~ elecday_binary) +
+  labs(
+    title = "Sentiment Counts by News Desk (Pre vs Post)",
+    x = "News Desk",
+    y = "Count"
+  )
+
+
+#could I make the y axis percentages instead of count
+headline_pct <- headlines_slim %>%
+  filter(news_desk %in% headlines_desk) %>%
+  count(elecday_binary, news_desk, sentiment_label) %>%
+  group_by(elecday_binary, news_desk) %>%
+  mutate(pct = n / sum(n)) %>%
+  ungroup()
+
+# Get ordering based on pre period
+desk_order <- headline_pct %>%
+  filter(elecday_binary == "pre", sentiment_label == "POSITIVE") %>%
+  arrange(desc(pct)) %>%
+  pull(news_desk)
+
+# Step 3: Plot with news_desk reordered
+headline_pct %>%
+  mutate(news_desk = factor(news_desk, levels = desk_order)) %>%
+  ggplot(aes(x = news_desk, y = pct, fill = sentiment_label)) +
+  geom_col(position = "fill") +
+  coord_flip() +
+  facet_wrap(~ elecday_binary) +
+  labs(
+    title = "Proportion of Sentiment by News Desk (Pre vs Post)",
+    x = "News Desk",
+    y = "Proportion of Headlines",
+    fill = "Sentiment Label"
+  )
+
+```
+
+
+
+
