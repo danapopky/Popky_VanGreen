@@ -193,7 +193,7 @@ nyt_sentiment <- read.csv("~/Popky_VanGreen/Analysis project/Code/NYT articles w
 
 nyt_sentiment <- nyt_sentiment %>% 
   mutate(elecday_binary = ifelse(as.Date(pub_date_date) < as.Date("2024-11-06"),
-                                 "pre", "post"))
+                                 "1.pre", "2.post"))
 
 #overall bar chart just to show much neutral dominates 
 table(nyt_sentiment$sentiment_label, nyt_sentiment$elecday_binary)
@@ -357,7 +357,7 @@ headline_pct <- headlines_slim %>%
 
 # Get ordering based on pre period
 desk_order <- headline_pct %>%
-  filter(elecday_binary == "pre", sentiment_label == "POSITIVE") %>%
+  filter(elecday_binary == "1.pre", sentiment_label == "POSITIVE") %>%
   arrange(desc(pct)) %>%
   pull(news_desk)
 
