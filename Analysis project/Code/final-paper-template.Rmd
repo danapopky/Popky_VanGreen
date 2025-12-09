@@ -1,0 +1,113 @@
+---
+title: "From Pre-Election to Post-Election: Measuring Sentiment Shifts in New York Times Headlines"
+author: "Dana Popky and Ted Van Green"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: yes
+    df_print: kable
+references:
+- id: Wickham2014
+  title: Tidy Data
+  author:
+  - family: Wickham
+    given: Hadley
+  container-title: Journal of Statistical Software
+  volume: 59
+  issue: 10
+  page: 1-23
+  type: article-journal
+  issued:
+    year: 2014
+- id: Baumer2017
+  title: Modern Data Science with R
+  author:
+  - family: Baumer
+    given: Benjamin S.
+  - family: Kaplan
+    given: Daniel T.
+  - family: Horton
+    given: Nicholas J.
+  type: book
+  publisher: Chapman \& Hall/CRC Press.
+  issued:
+    year: 2017
+---
+
+```{r, include = FALSE}
+library(knitr)
+library(tidyverse)
+library(rvest)
+library(stringr)
+library(readr)
+library(purrr)
+library(tidytext)
+```
+
+## Introduction
+
+Media outlets play an important role in U.S. elections. Decisions about which stories to cover and how to report on the candidates can influence voter perception and behavior. But in the 2024 election, media outlets came under fire from critics alleging that their reporting was biased, inaccurate, or favored one political side. With [most Americans](https://www.pewresearch.org/journalism/2024/10/10/how-closely-are-americans-following-election-news-and-what-are-they-seeing/) tuning into election news, a partisan tilt could have an outsize impact on turnout, vote choice, and even trust in democracy. In this paper, we ask to what extent the data supports allegations of media bias by analyzing the sentiment and emotions of news headlines before and after the 2024 election.   
+
+\
+In this analysis, we focus on the New York Times. In the lead up to the 2024 election, a[bout four in 10 Americans](https://www.pewresearch.org/journalism/2024/10/10/where-americans-turn-for-election-news/) say they used the New York Times as a source of political and election news. But, Democrats were much more likely than Republicans to say they [use and trust the NYT coverage](https://www.pewresearch.org/journalism/feature/news-media-tracker/the_new_york_times). To evaluate a potential bias in their reporting, we scrape articles from the 30 days before and after the election and identify how the sentiment and emotions of NYT headlines shifted after Donald Trump’s election victory.
+
+## Methodology
+
+In this project, we first leverage the [New York Times’ Archive API](https://developer.nytimes.com/docs/archive-product/1/overview) to scrape articles posted in the 30 days before and after the 2024 presidential election (Oct. 7 - Dec. 6, 2024). This corpus of articles - 8,873 in total - includes everything the New York Times printed or posted in this time frame. To avoid capturing the sentiment of headlines about unrelated topics like pop culture or cooking, we identified a set of keywords about the election and only kept articles whose headlines contained at least one of these key words. At the end of this data cleaning, we were left with a total of 3,173 articles. 
+
+\
+To identify the sentiment and emotion of each headline, we use the [distilBERT](https://huggingface.co/docs/transformers/en/model_doc/distilbert) and the [English DistilRoBERTa-base](https://huggingface.co/j-hartmann/emotion-english-distilroberta-base) [Hugging Face](https://huggingface.co/) models. These pre-trained transformer models are trained on large text datasets and can understand the meaning of words in context, meaning they can pick up on things like word order and sarcasm. The distilBERT model returns a positive or negative classification of each headline, along with an associated confidence score. The distilRoBERTa-base model returns an emotion classification (anger, disgust, fear, joy, neutral, sadness, and surprise) and an associated confidence score. 
+
+## Results
+
+```{r, include = FALSE}
+
+#this code chunk does all of the data importing and cleaning for the charts. 
+
+nyt_scraped_articles <- read.csv("nyt_scraped_articles.csv")
+nytdf_relevant_articles <- read.csv("nytdf_relevant_articles.csv")
+nyt_sentiment <- read.csv("NYT articles with sentiment and emotion.csv")
+
+nyt_sentiment <- nyt_sentiment %>% 
+  mutate(elecday_binary = ifelse(as.Date(pub_date_date) < as.Date("2024-11-06"),
+                                 "1.pre", "2.post"))
+
+text_forclean <- nyt_sentiment %>% 
+  select(headline.main, elecday_binary, sentiment_label, sentiment_score,
+         emotion_label, emotion_score, news_desk)
+
+headlines_slim <- nyt_sentiment %>% 
+  select(headline.main, elecday_binary, sentiment_label, sentiment_score,
+         emotion_label, emotion_score, news_desk)
+
+tidy_textpre <- text_forclean %>% 
+  unnest_tokens(word, headline.main, token = "words")
+
+tidy_textpre <- tidy_textpre %>% anti_join(stop_words)
+
+```
+
+In the 30 days before the election, a majority (59 percent) of New York Times articles had a positive sentiment. After the election, the articles leaned slightly more negative (52%) than positive (48%). IDK.
+
+```{r, echo = FALSE}
+
+headlines_slim %>% 
+  count(elecday_binary, sentiment_label) %>%
+  group_by(elecday_binary) %>%
+  mutate(pct = n / sum(n)) %>%
+  ggplot(aes(x = elecday_binary, y = pct, fill = sentiment_label)) +
+  geom_col(position = "fill") +
+  geom_text(aes(label = scales::percent(pct, accuracy = 1)),
+            position = position_stack(vjust = 0.5),
+            color = "white", size = 4) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    x = "Period",
+    y = "Percent",
+    fill = "Sentiment",
+    title = "Sentiment Label Distribution: Pre vs Post"
+  )
+
+```
+
+## Conclusion
