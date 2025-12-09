@@ -218,7 +218,7 @@ text_forclean <- nyt_sentiment %>%
 
 headlines_slim <- nyt_sentiment %>% 
   select(headline.main, elecday_binary, sentiment_label, sentiment_score,
-         emotion_label, emotion_score, news_desk)
+         emotion_label, emotion_score, news_desk, pub_date_date)
 
 tidy_textpre <- text_forclean %>% 
   unnest_tokens(word, headline.main, token = "words")
@@ -374,6 +374,80 @@ headline_pct %>%
     y = "Proportion of Headlines",
     fill = "Sentiment Label"
   )
+
+
+headline_daily <- headlines_slim %>% 
+  group_by(pub_date_date) %>% 
+  summarise(avg_score = mean(sentiment_score))
+
+headline_daily$pub_date_date <- as.Date(headline_daily$pub_date_date)
+
+ggplot(headline_daily, aes(x = pub_date_date, y = avg_score))+
+  geom_line(color="red", linewidth=1)+
+  labs(title = "Average Sentiment Score by Day",
+       x = "Date", y = "Average Sentiment Score")+
+  theme_minimal()
+
+headline_trump <- headlines_slim %>% 
+  filter(str_detect(headline.main, regex("trump", ignore_case = T)))
+
+headline_harris <- headlines_slim %>% 
+  filter(str_detect(headline.main, regex("harris", ignore_case = T)))
+
+
+headline_daily_t <- headline_trump %>% 
+  group_by(pub_date_date) %>% 
+  summarise(avg_score = mean(sentiment_score))
+
+headline_daily_t$pub_date_date <- as.Date(headline_daily_t$pub_date_date)
+
+ggplot(headline_daily_t, aes(x = pub_date_date, y = avg_score))+
+  geom_line(color="red", linewidth=1)+
+  labs(title = "Average Sentiment Score by Day",
+       x = "Date", y = "Average Sentiment Score")+
+  theme_minimal()
+
+headline_daily_h <- headline_harris %>% 
+  group_by(pub_date_date) %>% 
+  summarise(avg_score = mean(sentiment_score))
+
+headline_daily_h$pub_date_date <- as.Date(headline_daily_h$pub_date_date)
+
+ggplot(headline_daily_h, aes(x = pub_date_date, y = avg_score))+
+  geom_line(color="red", linewidth=1)+
+  labs(title = "Average Sentiment Score by Day",
+       x = "Date", y = "Average Sentiment Score")+
+  theme_minimal()
+
+
+headline_trump%>% 
+  count(elecday_binary, sentiment_label) %>%
+  group_by(elecday_binary) %>%
+  mutate(pct = n / sum(n)) %>%
+  ggplot(aes(x = elecday_binary, y = pct, fill = sentiment_label)) +
+  geom_col(position = "fill") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    x = "Period",
+    y = "Percent",
+    fill = "Sentiment",
+    title = "Sentiment Label Distribution: Pre vs Post for Trump"
+  ) +theme_minimal()
+
+
+headline_harris %>% 
+  count(elecday_binary, sentiment_label) %>%
+  group_by(elecday_binary) %>%
+  mutate(pct = n / sum(n)) %>%
+  ggplot(aes(x = elecday_binary, y = pct, fill = sentiment_label)) +
+  geom_col(position = "fill") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    x = "Period",
+    y = "Percent",
+    fill = "Sentiment",
+    title = "Sentiment Label Distribution: Pre vs Post for Harris"
+  ) +theme_minimal()
 
 ```
 
