@@ -246,7 +246,7 @@ tidy_textpre %>%
   labs(
     x = "Word Count",
     y = NULL,
-    title = "Top 10 Words pre/post election"
+    title = "Top 10 Words used in NYT headlines before and after the election"
   ) +
   theme_bw() +
   theme(strip.text = element_text(face = "bold"))
@@ -426,6 +426,9 @@ headline_trump%>%
   mutate(pct = n / sum(n)) %>%
   ggplot(aes(x = elecday_binary, y = pct, fill = sentiment_label)) +
   geom_col(position = "fill") +
+  geom_text(aes(label = scales::percent(pct, accuracy=1)),
+            position = position_stack(vjust = 0.5),
+            color = "white", size = 4) + 
   scale_y_continuous(labels = scales::percent_format()) +
   labs(
     x = "Period",
@@ -441,6 +444,9 @@ headline_harris %>%
   mutate(pct = n / sum(n)) %>%
   ggplot(aes(x = elecday_binary, y = pct, fill = sentiment_label)) +
   geom_col(position = "fill") +
+  geom_text(aes(label = scales::percent(pct, accuracy=1)),
+            position = position_stack(vjust = 0.5),
+            color = "white", size = 4) + 
   scale_y_continuous(labels = scales::percent_format()) +
   labs(
     x = "Period",
